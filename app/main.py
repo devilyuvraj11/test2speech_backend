@@ -13,9 +13,14 @@ class TranslationRequest(BaseModel):
     text: str
     source: str = "auto"
     target: str = "hi"
-
 BASE = Path(__file__).resolve().parent.parent
-UPLOADS = BASE / "uploads"
+
+# Use /tmp on Vercel and the project uploads folder locally.
+if os.getenv("VERCEL"):
+    UPLOADS = Path("/tmp/uploads")
+else:
+    UPLOADS = BASE / "uploads"
+
 UPLOADS.mkdir(parents=True, exist_ok=True)
 
 MODEL_SIZE = os.getenv("WHISPER_MODEL", "small")
