@@ -1,12 +1,12 @@
-import json, os, threading, traceback, uuid
+import json, os, threading, traceback, uuid, tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-#from faster_whisper import WhisperModel
-from pydantic import BaseModel
+from faster_whisper import WhisperModel
+from pydantic import BaseModel, Field
 from app.translation import translate_text, translate_batch
 
 class TranslationRequest(BaseModel):
@@ -40,9 +40,18 @@ ALLOWED_EXT = {".mp3", ".wav", ".m4a", ".mp4", ".webm", ".ogg", ".mov", ".aac", 
 
 
 def get_model():
-    raise RuntimeError(
-        "Transcription is disabled during Vercel API testing."
-    )
+    global MODEL
+
+    if MODEL is None:
+        with MODEL_LOCK:
+            if MODEL is None:
+                MODEL = WhisperModel(
+                    MODEL_SIZE,
+                    device=DEVICE,
+                    compute_type=COMPUTE,
+                )
+
+    return MODEL
 
 
 def fmt(sec: float, srt=False):
@@ -168,6 +177,83 @@ async def translate_batch_api(request: BatchTranslationRequest):
             status_code=500,
             detail=f"Batch translation failed: {str(e)}"
         )
+
+
+@app.post("/api/live/transcribe")
+async def live_transcribe(
+    file: UploadFile = File(...),
+    target: str = Form("hi"),
+):
+    suffix = Path(file.filename or "chunk.wav").suffix.lower()
+
+    if suffix not in ALLOWED_EXT:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported audio format",
+        )
+
+    temp_path = None
+
+    try:
+        # Save this audio chunk temporarily.
+        with tempfile.NamedTemporaryFile(
+            suffix=suffix,
+            delete=False,
+        ) as temp:
+            temp_path = Path(temp.name)
+
+            while chunk := await file.read(64 * 1024):
+                temp.write(chunk)
+
+        # Recognize speech in the chunk.
+        model = get_model()
+
+        segments, info = model.transcribe(
+            str(temp_path),
+            beam_size=1,
+            vad_filter=False,
+        )
+
+        original_text = " ".join(
+            segment.text.strip()
+            for segment in segments
+            if segment.text.strip()
+        ).strip()
+
+        if not original_text:
+            return {
+                "success": True,
+                "original": "",
+                "translated": "",
+                "source": info.language,
+                "target": target,
+            }
+
+        # Translate the recognized text.
+        translated_text = translate_text(
+            text=original_text,
+            source=info.language,
+            target=target,
+        )
+
+        return {
+            "success": True,
+            "original": original_text,
+            "translated": translated_text,
+            "source": info.language,
+            "target": target,
+        }
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Live transcription failed: {str(e)}",
+        )
+
+    finally:
+        if temp_path:
+            temp_path.unlink(missing_ok=True)
 
 @app.post("/api/jobs")
 async def create_job(file: UploadFile = File(...)):
