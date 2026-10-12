@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from faster_whisper import WhisperModel
+#from faster_whisper import WhisperModel
 from pydantic import BaseModel
 from app.translation import translate_text, translate_batch
 
@@ -35,12 +35,9 @@ ALLOWED_EXT = {".mp3", ".wav", ".m4a", ".mp4", ".webm", ".ogg", ".mov", ".aac", 
 
 
 def get_model():
-    global MODEL
-    if MODEL is None:
-        with MODEL_LOCK:
-            if MODEL is None:
-                MODEL = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE)
-    return MODEL
+    raise RuntimeError(
+        "Transcription is disabled during Vercel API testing."
+    )
 
 
 def fmt(sec: float, srt=False):
